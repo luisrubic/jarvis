@@ -25,56 +25,48 @@ jobs:
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Fix SDK - Use ONLY 34.0.0 and patch aidl
+      - name: Build APK
         run: |
+          # Fix pip 26
           grep -q "android.api" buildozer.spec || echo "android.api = 34" >> buildozer.spec
           sed -i 's/android.api = 33/android.api = 34/g' buildozer.spec || true
-          
-          rm -rf ~/.buildozer .buildozer bin
+          rm -rf .buildozer bin
           buildozer init || true
-          buildozer android p4a -- --help || true
           find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/pip install -U pip/pip install pip==24.0/g' 2>/dev/null || true
-
+          
+          # Accetta licenze PRIMA
+          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo "y" | ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          
+          # Avvia buildozer una volta per fargli scaricare SDK, poi lo patchiamo
+          buildozer android debug || true
+          
+          # ORA PATCHIAMO DOPO CHE HA SCARICATO
           SYS=/usr/local/lib/android/sdk
           P4A=~/.buildozer/android/platform/android-sdk
-          rm -rf $P4A
-          mkdir -p $P4A/tools/bin $P4A/licenses
-          
-          # COPIA SOLO 34.0.0 - cancella 37, 36, 35 che danno problemi
           mkdir -p $P4A/build-tools
-          cp -r $SYS/build-tools/34.0.0 $P4A/build-tools/
-          # opzionale, copia anche 33 se c'è
-          cp -r $SYS/build-tools/33.0.2 $P4A/build-tools/ 2>/dev/null || true
+          rm -rf $P4A/build-tools/37.0.0 $P4A/build-tools/36* $P4A/build-tools/35*
+          if [ ! -d "$P4A/build-tools/34.0.0" ]; then
+            cp -r $SYS/build-tools/34.0.0 $P4A/build-tools/
+          fi
           
-          ln -s $SYS/platforms $P4A/platforms
-          ln -s $SYS/platform-tools $P4A/platform-tools
-          ln -s $SYS/cmdline-tools $P4A/cmdline-tools
-          ln -s $SYS/cmdline-tools/latest/bin/sdkmanager $P4A/tools/bin/sdkmanager
-          cp $SYS/licenses/* $P4A/licenses/ 2>/dev/null || true
-          
-          # Patch AIDL per far tornare 0
+          # Patch AIDL wrapper
           for d in $P4A/build-tools/*; do
-            if [ -f "$d/aidl" ]; then
+            if [ -f "$d/aidl" ] && [ ! -f "$d/aidl.real" ]; then
               mv $d/aidl $d/aidl.real
-              echo '#!/bin/bash
-          DIR="$(dirname "$0")"
-          if [ $# -eq 0 ]; then exit 0; fi
-          exec "$DIR/aidl.real" "$@"' > $d/aidl
-              chmod +x $d/aidl
-              chmod +x $d/aidl.real
+              printf '#!/bin/bash\nDIR="$(dirname "$0")"\nif [ $# -eq 0 ]; then exit 0; fi\nexec "$DIR/aidl.real" "$@"\n' > $d/aidl
+              chmod +x $d/aidl $d/aidl.real
             fi
           done
           
           echo "=== FINAL CHECK ==="
           ls $P4A/build-tools/
-          $P4A/build-tools/34.0.0/aidl
-          echo "Exit code: $? (deve essere 0)"
-          ldd $P4A/build-tools/34.0.0/aidl.real | head
-
-      - name: Build APK
-        env:
-          ANDROIDAPI: "34"
-        run: buildozer android debug --verbose
+          $P4A/build-tools/34.0.0/aidl && echo "AIDL OK"
+          
+          # Build finale vera
+          buildozer android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v5
