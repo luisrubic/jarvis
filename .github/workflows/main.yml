@@ -15,7 +15,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install system deps
+      - name: Install deps
         run: |
           sudo apt-get update
           sudo apt-get install -y zip unzip libtool libtool-bin autoconf automake cmake pkg-config libffi-dev libssl-dev libltdl-dev libtinfo5
@@ -25,23 +25,40 @@ jobs:
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Clean and Patch P4A
+      - name: Clean and Fix Build-Tools + AIDL
         run: |
           rm -rf ~/.buildozer .buildozer bin
           buildozer init || true
-          # Questo crea la struttura
           buildozer android p4a -- --help || true
-          # FIX PIP 26 -> blocca pip a 24.0 ovunque in p4a
+          
+          # FIX PIP 26 bug
           find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/pip install -U pip/pip install pip==24.0/g' 2>/dev/null || true
           find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/--upgrade pip/==24.0/g' 2>/dev/null || true
-          # FIX LICENZE + AIDL
-          SDK=~/.buildozer/android/platform/android-sdk
-          SYS_SDK=/usr/local/lib/android/sdk
-          mkdir -p $SDK/licenses
-          cp $SYS_SDK/licenses/* $SDK/licenses/ 2>/dev/null || true
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
-          $SYS_SDK/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK "platform-tools" "build-tools;34.0.0" || true
-          ls $SDK/build-tools/34.0.0/aidl && echo "AIDL OK"
+
+          P4A=~/.buildozer/android/platform/android-sdk
+          SYS=/usr/local/lib/android/sdk
+          
+          # 1. Licenze
+          mkdir -p $P4A/licenses
+          cp $SYS/licenses/* $P4A/licenses/ 2>/dev/null || true
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $P4A/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $P4A/licenses/android-sdk-license
+          echo "24333f8a63b6825ea9c5514f83c1059b8ea4b324" >> $P4A/licenses/android-sdk-license
+
+          # 2. FIX DEFINITIVO AIDL: copia build-tools già installati dal sistema
+          echo "Copying build-tools from system SDK..."
+          ls $SYS/build-tools/ || true
+          mkdir -p $P4A/build-tools
+          cp -r $SYS/build-tools/34.0.0 $P4A/build-tools/ 2>/dev/null || cp -r $SYS/build-tools/33.0.2 $P4A/build-tools/34.0.0 || true
+          cp -r $SYS/build-tools/* $P4A/build-tools/ 2>/dev/null || true
+          
+          mkdir -p $P4A/platform-tools
+          cp -r $SYS/platform-tools/* $P4A/platform-tools/ 2>/dev/null || true
+
+          echo "Checking AIDL..."
+          ls $P4A/build-tools/
+          ls $P4A/build-tools/34.0.0/ | grep aidl
+          $P4A/build-tools/34.0.0/aidl --version || $P4A/build-tools/34.0.0/aidl --help || echo "AIDL exists"
 
       - name: Build APK
         run: buildozer android debug --verbose
