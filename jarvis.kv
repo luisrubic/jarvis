@@ -1,0 +1,82 @@
+#:kivy 2.2.0
+#:import MDLabel kivymd.uix.label.MDLabel
+
+ScreenManager:
+    HomeScreen:
+    EmergencyScreen:
+    LensScreen:
+    EconomyScreen:
+    OperariosScreen:
+
+<HomeScreen>:
+    name: 'home'
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 20
+        spacing: 15
+        MDLabel:
+            text: 'JARVIS PRONTO\nDi: JARVIS EMERGENZA\nOppure urla: AIUTO!'
+            halign: 'center'
+            font_style: 'H5'
+            size_hint_y: .4
+        Button:
+            text: 'EMERGENZA PARLATA\n"Che emergenza? Auto/Manuale?"'
+            size_hint_y: .2
+            background_color: 0,0.5,1,1
+            on_release: app.assistant.emergency_parlata.start_flow()
+        Button:
+            text: 'EMERGENZA MUTA - AIUTO! + SCOSSA\nPre-allarme 5s vibrazione'
+            size_hint_y: .25
+            background_color: 1,0,0,1
+            font_size: 18
+            on_release: app.assistant.emergency_muta.muta_trigger()
+        Button:
+            text: 'VAI A LENS / ECONOMIA'
+            size_hint_y: .15
+            on_release: root.manager.current = 'lens'
+
+<EmergencyScreen>:
+    name: 'emergency'
+    MDLabel:
+        text: '🚨 EMERGENZA ATTIVA\nChiamo 112 + SMS fidati + GPS live + Registrazione 120s'
+        halign: 'center'
+
+<LensScreen>:
+    name: 'lens'
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 15
+        spacing: 10
+        MDLabel:
+            text: 'LENS V5 - FOTO IN RETE'
+            halign: 'center'
+            size_hint_y: .15
+        Button:
+            text: '📸 SCATTA PRODOTTO\nManda foto IN RETE a Groq Vision\n+ cerca prezzi Amazon/Trovaprezzi/Idealo/eBay'
+            size_hint_y: .35
+            on_release: app.assistant.lens.scansiona()
+        Button:
+            text: '🧾 SCATTA SCONTRINO\nOCR automatico\nDove / Cosa / Totale'
+            size_hint_y: .35
+            on_release: app.assistant.economy.scansiona_scontrino()
+        Button:
+            text: '📊 VAI A ECONOMIA FAMIGLIA'
+            size_hint_y: .15
+            on_release: root.manager.current = 'economy'
+
+<EconomyScreen>:
+    name: 'economy'
+    BoxLayout:
+        orientation: 'vertical'
+        MDLabel:
+            text: 'ECONOMIA FAMIGLIA\nDove spendi di PIU / di MENO\nConsigli risparmio automatici'
+            halign: 'center'
+        Button:
+            text: 'Vedi report mese'
+            on_release: print(app.assistant.economy.budget.report_mese())
+
+<OperariosScreen>:
+    name: 'operarios'
+    MDLabel:
+        text: 'OPERARIOS + SPX + MEKOS\nTask / Ordini / Sync prezzi'
+        halign: 'center'
