@@ -2,7 +2,6 @@
 title = Jarvis
 package.name = jarvis
 package.domain = com.jarvis.app
-
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,ttf
 version = 0.1
@@ -25,5 +24,3 @@ android.accept_sdk_license_agreement = True
 android.archs = arm64-v8a, armeabi-v7a
 android.allow_backup = True
 p4a.bootstrap = sdl2
-
-# Se usi altre librerie aggiungile qui es: requirements = python3,kivy,kivymd,requests,plyer
