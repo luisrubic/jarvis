@@ -1,50 +1,59 @@
 name: Build APK
-on: [push]
+
+on:
+  push:
+    branches: [ main ]
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v5
+    runs-on: ubuntu-latest
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
-      - uses: actions/setup-java@v5
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install system deps
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install Buildozer
         run: |
-          sudo apt update
-          sudo apt install -y zip unzip libffi-dev libssl-dev libltdl-dev wget
-          pip install --upgrade pip
-          pip install buildozer Cython==0.29.33
+          pip install --upgrade pip==24.0
+          pip install buildozer cython==0.29.36
 
       - name: Fix Android SDK paths
         run: |
-          SDK=$HOME/.buildozer/android/platform/android-sdk
-          mkdir -p $SDK/cmdline-tools
-          cd $SDK/cmdline-tools
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
-          unzip -q tools.zip
-          mv cmdline-tools latest
-          # Ora creiamo ANCHE la cartella vecchia che vuole buildozer, con tutto dentro
-          rm -rf $SDK/tools
-          cp -r latest $SDK/tools
-          export ANDROID_HOME=$SDK
-          export PATH=$SDK/cmdline-tools/latest/bin:$PATH
-          yes | sdkmanager --licenses
-          sdkmanager --install "build-tools;33.0.2" "platforms;android-33" "platform-tools" "ndk;25.1.8937393"
+          mkdir -p ~/.buildozer/android/platform/
+          ln -sfn /usr/local/lib/android/sdk ~/.buildozer/android/platform/android-sdk || true
+          ln -sfn /usr/local/lib/android/sdk/ndk/27.3.13750724 ~/.buildozer/android/platform/android-ndk-r28c || true
+          ls ~/.buildozer/android/platform/
+
+      - name: Patch pip bug for Python 3.14
+        run: |
+          buildozer android p4a -- --help || true
+          find ~/.buildozer -name build.py -type f -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \;
+          find ~/.buildozer -name build.py -type f -exec sed -i 's/pip install --upgrade pip/pip install pip==24.0/g' {} \;
+          echo "Patched"
 
       - name: Build APK
         run: |
-          buildozer android debug
+          buildozer android debug --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: jarvis-apk
           path: bin/*.apk
+          if-no-files-found: error
