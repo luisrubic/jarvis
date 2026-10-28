@@ -5,30 +5,30 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
 
-      - name: Fix buildozer.spec per evitare Build-Tools 37
+      - name: Fix buildozer.spec
         run: |
-          # se non hai buildozer.spec, crealo
           [ -f buildozer.spec ] || buildozer init || true
-          # forza API 34 e build-tools 34.0.0 (quello che non chiede licenza 37)
           sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec || echo "android.api = 34" >> buildozer.spec
           if grep -q "build_tools_version" buildozer.spec; then
             sed -i 's/^#*.*build_tools_version.*/android.build_tools_version = 34.0.0/' buildozer.spec
           else
             echo "android.build_tools_version = 34.0.0" >> buildozer.spec
           fi
-          echo "--- buildozer.spec fixato ---"
-          grep -E "android.api|build_tools_version|title|source.include" buildozer.spec | head -20
+          cat buildozer.spec | grep -E "android.api|build_tools"
 
-      - name: Build APK con Action già pronta
-        uses: ArtemSBulgakov/buildozer-action@v1
-        with:
-          workdir: .
-          command: buildozer android debug
-          buildozer_version: master
+      - name: Build APK con Docker ufficiale Kivy
+        run: |
+          # Usa l'immagine ufficiale, non quella rotta con il PPA
+          docker run --rm \
+            -v $PWD:/home/user/hostcwd \
+            -v $PWD/.buildozer:/home/user/.buildozer \
+            kivy/buildozer:master \
+            android debug
+          sudo chown -R $USER:$USER bin .buildozer 2>/dev/null || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v5
