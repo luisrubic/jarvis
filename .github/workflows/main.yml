@@ -6,30 +6,32 @@ on:
 
 jobs:
   build:
-    # ubuntu-latest garantisce l'ambiente più aggiornato e i runtime Node più recenti
     runs-on: ubuntu-latest 
 
     steps:
-      # Aggiornato alla versione v5 (Node 20+)
       - uses: actions/checkout@v5 
 
-      # Aggiornato alla versione v5 (Risolve la deprecation di Java v4 nei log)
+      # Setup Java v5 (Node 20+ nativo)
+       Pentamento delle licenze e dei warning
       - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
+       Pentamento della build Docker
       - name: Build APK inside Fixed Docker Environment
         run: |
           cat > run_buildozer.sh <<'EOS'
           #!/bin/bash
           set -e
           
+          # Prepariamo le cartelle per l'utente root del container
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
+          mkdir -p /root/.buildozer
           
-          # Configurazione per bloccare SDK/NDK a versioni stabili (API 33, NDK 25b)
+          # Forziamo SDK 33 e NDK 25b per evitare i bug delle versioni 37 sperimentali
           if [ -f buildozer.spec ]; then
             sed -i 's/^#* *android.api =.*/android.api = 33/' buildozer.spec
             sed -i 's/^#* *android.minapi =.*/android.minapi = 21/' buildozer.spec
@@ -37,27 +39,29 @@ jobs:
             sed -i 's/^#* *android.build_tools_version =.*/android.build_tools_version = 33.0.0/' buildozer.spec
           fi
 
-          # Scrittura licenze Android SDK
-          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
-          printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c1051b8f6b012\n" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          # Scrittura preventiva delle licenze SDK per l'utente root nel container
+          mkdir -p /root/.buildozer/android/platform/android-sdk/licenses
+          printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c1051b8f6b012\n" > /root/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
 
+          # Forza Buildozer a non fare domande interattive sull'utente root
           export ALLOW_ROOT=1
           buildozer android debug
           EOS
 
           chmod +x run_buildozer.sh
 
-          # Esecuzione isolata nel container ufficiale di Buildozer
+          # CORREZIONE: Usiamo il tag ufficiale 'latest' al posto di 'master'
           docker run --rm \
             -v $PWD:/home/user/hostcwd \
             -w /home/user/hostcwd \
             --entrypoint bash \
-            kivy/buildozer:master \
+            kivy/buildozer:latest \
             ./run_buildozer.sh
 
+          # Ripristiniamo i permessi della cartella bin per l'azione di upload di GitHub
           sudo chown -R $USER:$USER bin 2>/dev/null || true
 
-      # Aggiornato alla versione v5 (Node aggiornato e compatibile)
+      # Upload dell'Artifact (Aggiornato alla v5)
       - name: Upload Finished APK
         uses: actions/upload-artifact@v5
         with:
