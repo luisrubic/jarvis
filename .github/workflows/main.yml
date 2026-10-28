@@ -42,21 +42,12 @@ jobs:
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Init p4a and Patch pip + sdkmanager
+      - name: Patch p4a pip bug
         run: |
           buildozer init || true
           buildozer android p4a -- --help || true
-          
-          # 1. Patch pip bug
-          find ~/.buildozer -name build.py -type f -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \;
-          find ~/.buildozer -name build.py -type f -exec sed -i 's/pip install --upgrade pip/pip install pip==24.0/g' {} \;
-          
-          # 2. FIX sdkmanager path - questo è quello che ti manca ora
-          mkdir -p ~/.buildozer/android/platform/android-sdk/tools/bin
-          ln -sf /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
-          chmod +x ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
-          ls -l ~/.buildozer/android/platform/android-sdk/tools/bin/
-          echo "Fixed sdkmanager"
+          find ~/.buildozer -type f -name build.py -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \;
+          find ~/.buildozer -type f -name build.py -exec sed -i 's/pip install --upgrade pip/pip install pip==24.0/g' {} \;
 
       - name: Build APK
         run: |
