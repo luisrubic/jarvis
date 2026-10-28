@@ -18,16 +18,62 @@ jobs:
           else
             echo "android.build_tools_version = 34.0.0" >> buildozer.spec
           fi
-          cat buildozer.spec | grep -E "android.api|build_tools|title"
+          cat buildozer.spec | grep -E "android.api|build_tools"
 
-      - name: Build APK con Docker ufficiale
+      - name: Build APK
         run: |
-          docker pull kivy/buildozer:latest
+          cat > build_inside_docker.sh <<'EOS'
+          #!/bin/bash
+          set -e
+          SDK=~/.buildozer/android/platform/android-sdk
+          SYS_SDK=/opt/android/android-sdk 2>/dev/null || echo "no sys sdk"
+          
+          # Primo avvio per scaricare SDK
+          buildozer android debug || true
+          
+          # Fix licenze
+          mkdir -p $SDK/licenses
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $SDK/licenses/android-sdk-license
+          echo "24333f8a63b6825ea9c5514f83c1051b8f6b012" >> $SDK/licenses/android-sdk-license
+          
+          # Installa build-tools
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK 2>&1 | tail -3 || true
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --install "build-tools;34.0.0" --sdk_root=$SDK 2>&1 | tail -10 || true
+          
+          # Crea fake 37 se cerca 37
+          if [ -d "$SDK/build-tools/34.0.0" ]; then
+            rm -rf $SDK/build-tools/37.0.0
+            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/37.0.0
+          fi
+          
+          # PATCH AIDL - il fix vero
+          echo "=== PATCH AIDL ==="
+          find $SDK -name aidl -type f 2>/dev/null | while read AIDL_PATH; do
+            echo "Patcho $AIDL_PATH"
+            if [ ! -f "$AIDL_PATH.real" ]; then
+              mv "$AIDL_PATH" "$AIDL_PATH.real"
+              printf '#!/bin/bash\nDIR="$(dirname "$0")"\nif [ $# -eq 0 ]; then exit 0; fi\nexec "$DIR/aidl.real" "$@"\n' > "$AIDL_PATH"
+              chmod +x "$AIDL_PATH" "$AIDL_PATH.real"
+            fi
+          done
+          
+          find $SDK -name aidl -type f -exec ls -lh {} \;
+          
+          # Build finale
+          buildozer android debug
+          EOS
+          chmod +x build_inside_docker.sh
+          
           docker run --rm \
             -v $PWD:/home/user/hostcwd \
+            -w /home/user/hostcwd \
             kivy/buildozer:latest \
-            android debug
-          sudo chown -R $USER:$USER bin .buildozer 2>/dev/null || true
+            bash ./build_inside_docker.sh
+          
+          sudo chown -R $USER:$USER bin 2>/dev/null || true
           ls -lh bin/
 
       - name: Upload APK
