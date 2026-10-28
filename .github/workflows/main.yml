@@ -4,6 +4,10 @@ on:
   push:
     branches: [ main ]
 
+concurrency:
+  group: build-apk
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,22 +32,31 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Install system deps
+        run: |
+          sudo apt update
+          sudo apt install -y zip unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
+
       - name: Install Buildozer
         run: |
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Fix Android SDK paths
+      - name: Init p4a and Patch pip + sdkmanager
         run: |
-          mkdir -p ~/.buildozer/android/platform/
-          ln -sfn /usr/local/lib/android/sdk ~/.buildozer/android/platform/android-sdk || true
-          ln -sfn /usr/local/lib/android/sdk/ndk/27.3.13750724 ~/.buildozer/android/platform/android-ndk-r28c || true
-
-      - name: Patch pip bug
-        run: |
+          buildozer init || true
           buildozer android p4a -- --help || true
+          
+          # 1. Patch pip bug
           find ~/.buildozer -name build.py -type f -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \;
           find ~/.buildozer -name build.py -type f -exec sed -i 's/pip install --upgrade pip/pip install pip==24.0/g' {} \;
+          
+          # 2. FIX sdkmanager path - questo è quello che ti manca ora
+          mkdir -p ~/.buildozer/android/platform/android-sdk/tools/bin
+          ln -sf /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
+          chmod +x ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
+          ls -l ~/.buildozer/android/platform/android-sdk/tools/bin/
+          echo "Fixed sdkmanager"
 
       - name: Build APK
         run: |
