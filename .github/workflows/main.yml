@@ -1,89 +1,64 @@
 name: Build APK
+
 on:
   push:
     branches: [ main ]
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    # ubuntu-latest garantisce l'ambiente più aggiornato e i runtime Node più recenti
+    runs-on: ubuntu-latest 
 
     steps:
-      - uses: actions/checkout@v5
+      # Aggiornato alla versione v5 (Node 20+)
+      - uses: actions/checkout@v5 
 
+      # Aggiornato alla versione v5 (Risolve la deprecation di Java v4 nei log)
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
-          distribution: temurin
-          java-version: 17
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Setup Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install System Dependencies
+      - name: Build APK inside Fixed Docker Environment
         run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y zip unzip libltdl-dev libffi-dev libssl-dev build-essential \
-            ccache git python3-dev pkg-config \
-            libc6:i386 libstdc++6:i386 libgcc-s1:i386 zlib1g:i386 libncurses6:i386 libtinfo6:i386
-          pip install pip==23.3.2
-          pip install buildozer cython==0.29.36 virtualenv python-for-android
-
-      - name: Pre-configure buildozer.spec
-        run: |
-          [ -f buildozer.spec ] || buildozer init || true
-          sed -i 's/^#* *android.api =.*/android.api = 33/' buildozer.spec
-          sed -i 's/^#* *android.minapi =.*/android.minapi = 21/' buildozer.spec
-          sed -i 's/^#* *android.ndk =.*/android.ndk = 25b/' buildozer.spec
-          sed -i 's/^#* *android.build_tools_version =.*/android.build_tools_version = 33.0.0/' buildozer.spec
-
-      - name: Build APK with Buildozer
-        run: |
+          cat > run_buildozer.sh <<'EOS'
+          #!/bin/bash
           set -e
-          SDK=$HOME/.buildozer/android/platform/android-sdk
-          mkdir -p $SDK/cmdline-tools/latest ~/.android
-          touch ~/.android/repositories.cfg
-          mkdir -p $SDK/licenses
-          printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c1051b8f6b012\n" > $SDK/licenses/android-sdk-license
-
-          if [ ! -f "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            cd /tmp
-            wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
-            unzip -q cmdline-tools.zip
-            cp -r cmdline-tools/* $SDK/cmdline-tools/latest/
-          fi
-          chmod +x $SDK/cmdline-tools/latest/bin/*
-          mkdir -p $SDK/tools/bin
-          ln -sf $SDK/cmdline-tools/latest/bin/sdkmanager $SDK/tools/bin/sdkmanager
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK || true
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK "platform-tools" "platforms;android-33" "build-tools;33.0.0" "ndk;25.1.8937393" || true
-
-          cd $GITHUB_WORKSPACE
-          # primo run per far scaricare p4a, poi patch
-          buildozer android debug || true
-
-          echo "=== PATCH AIDL + PIP ==="
-          find $HOME /opt -type f -name "build.py" | xargs grep -l "pip install -U pip" 2>/dev/null | while read f; do
-            echo "Patching $f"
-            sed -i 's/pip install -U pip/echo skip pip upgrade/g' "$f"
-            sed -i 's/pip install --upgrade pip/echo skip pip upgrade/g' "$f"
-          done
-          find $HOME /opt -type f -path "*pythonforandroid*" -name "*.py" -exec sed -i 's/raise.*Aidl cannot be executed/pass # PATCHED/g' {} \; 2>/dev/null || true
           
-          echo '#!/bin/bash
-          exit 0' | sudo tee /usr/local/bin/aidl > /dev/null
-          sudo chmod +x /usr/local/bin/aidl
-          for B in $SDK/build-tools/*; do [ -d "$B" ] || continue; echo '#!/bin/bash
-          exit 0' > "$B/aidl"; chmod +x "$B/aidl"; done
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          
+          # Configurazione per bloccare SDK/NDK a versioni stabili (API 33, NDK 25b)
+          if [ -f buildozer.spec ]; then
+            sed -i 's/^#* *android.api =.*/android.api = 33/' buildozer.spec
+            sed -i 's/^#* *android.minapi =.*/android.minapi = 21/' buildozer.spec
+            sed -i 's/^#* *android.ndk =.*/android.ndk = 25b/' buildozer.spec
+            sed -i 's/^#* *android.build_tools_version =.*/android.build_tools_version = 33.0.0/' buildozer.spec
+          fi
 
-          echo "=== RETRY ==="
-          rm -rf $HOME/.buildozer/android/platform/build-*
+          # Scrittura licenze Android SDK
+          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
+          printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c1051b8f6b012\n" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+
           export ALLOW_ROOT=1
           buildozer android debug
+          EOS
 
-      - name: Upload Finished APK Artifact
+          chmod +x run_buildozer.sh
+
+          # Esecuzione isolata nel container ufficiale di Buildozer
+          docker run --rm \
+            -v $PWD:/home/user/hostcwd \
+            -w /home/user/hostcwd \
+            --entrypoint bash \
+            kivy/buildozer:master \
+            ./run_buildozer.sh
+
+          sudo chown -R $USER:$USER bin 2>/dev/null || true
+
+      # Aggiornato alla versione v5 (Node aggiornato e compatibile)
+      - name: Upload Finished APK
         uses: actions/upload-artifact@v5
         with:
           name: jarvis-apk
