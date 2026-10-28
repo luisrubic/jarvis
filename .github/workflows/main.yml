@@ -18,14 +18,14 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip unzip libtool libtool-bin autoconf automake cmake pkg-config libffi-dev libssl-dev libltdl-dev libtinfo5
+          sudo apt-get install -y zip unzip libtool libtool-bin autoconf automake cmake pkg-config libffi-dev libssl-dev libltdl-dev libtinfo5 libc6-i386 lib32stdc++6 lib32z1
 
       - name: Install Buildozer
         run: |
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Fix SDK + Patch AIDL wrapper
+      - name: Fix SDK - Use ONLY 34.0.0 and patch aidl
         run: |
           grep -q "android.api" buildozer.spec || echo "android.api = 34" >> buildozer.spec
           sed -i 's/android.api = 33/android.api = 34/g' buildozer.spec || true
@@ -40,39 +40,36 @@ jobs:
           rm -rf $P4A
           mkdir -p $P4A/tools/bin $P4A/licenses
           
-          # Copia build-tools per poterli patchare (symlink è read-only)
-          echo "Copying build-tools (writable)..."
-          cp -r $SYS/build-tools $P4A/build-tools
+          # COPIA SOLO 34.0.0 - cancella 37, 36, 35 che danno problemi
+          mkdir -p $P4A/build-tools
+          cp -r $SYS/build-tools/34.0.0 $P4A/build-tools/
+          # opzionale, copia anche 33 se c'è
+          cp -r $SYS/build-tools/33.0.2 $P4A/build-tools/ 2>/dev/null || true
           
-          # Symlink resto
           ln -s $SYS/platforms $P4A/platforms
           ln -s $SYS/platform-tools $P4A/platform-tools
           ln -s $SYS/cmdline-tools $P4A/cmdline-tools
           ln -s $SYS/cmdline-tools/latest/bin/sdkmanager $P4A/tools/bin/sdkmanager
           cp $SYS/licenses/* $P4A/licenses/ 2>/dev/null || true
           
-          # PATCH AIDL: wrapper che ritorna 0 anche senza argomenti
+          # Patch AIDL per far tornare 0
           for d in $P4A/build-tools/*; do
-            if [ -f "$d/aidl" ] && [ ! -f "$d/aidl.real" ]; then
-              echo "Patching $d/aidl"
+            if [ -f "$d/aidl" ]; then
               mv $d/aidl $d/aidl.real
-              cat > $d/aidl << 'EOF'
-          #!/bin/bash
+              echo '#!/bin/bash
           DIR="$(dirname "$0")"
-          if [ $# -eq 0 ]; then
-            echo "AIDL patched wrapper OK"
-            exit 0
-          fi
-          exec "$DIR/aidl.real" "$@"
-          EOF
+          if [ $# -eq 0 ]; then exit 0; fi
+          exec "$DIR/aidl.real" "$@"' > $d/aidl
               chmod +x $d/aidl
+              chmod +x $d/aidl.real
             fi
           done
           
-          echo "=== TEST AIDL ==="
+          echo "=== FINAL CHECK ==="
+          ls $P4A/build-tools/
           $P4A/build-tools/34.0.0/aidl
-          echo "Exit code: $? - should be 0 now"
-          ls $P4A/build-tools/34.0.0/aidl*
+          echo "Exit code: $? (deve essere 0)"
+          ldd $P4A/build-tools/34.0.0/aidl.real | head
 
       - name: Build APK
         env:
