@@ -12,67 +12,68 @@ jobs:
       - name: Fix buildozer.spec
         run: |
           [ -f buildozer.spec ] || buildozer init || true
+          # Forza API 34 per evitare Build-Tools 37
           sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec || echo "android.api = 34" >> buildozer.spec
-          if grep -q "build_tools_version" buildozer.spec; then
+          if grep -q "android.build_tools_version" buildozer.spec; then
             sed -i 's/^#*.*build_tools_version.*/android.build_tools_version = 34.0.0/' buildozer.spec
           else
             echo "android.build_tools_version = 34.0.0" >> buildozer.spec
           fi
-          cat buildozer.spec | grep -E "android.api|build_tools"
+          echo "--- SPEC ---"
+          grep -E "title|android.api|build_tools_version|p4a.source_dir" buildozer.spec | head -20
 
-      - name: Build APK
+      - name: Build APK inside Docker
         run: |
           cat > build_inside_docker.sh <<'EOS'
           #!/bin/bash
           set -e
           SDK=~/.buildozer/android/platform/android-sdk
-          SYS_SDK=/opt/android/android-sdk 2>/dev/null || echo "no sys sdk"
-          
-          # Primo avvio per scaricare SDK
-          buildozer android debug || true
-          
-          # Fix licenze
-          mkdir -p $SDK/licenses
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
+
+          echo "=== 1st run to download SDK ==="
+          buildozer android debug || true
+
+          echo "=== Fix licenses ==="
+          mkdir -p $SDK/licenses
           echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
           echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $SDK/licenses/android-sdk-license
           echo "24333f8a63b6825ea9c5514f83c1051b8f6b012" >> $SDK/licenses/android-sdk-license
           
-          # Installa build-tools
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK 2>&1 | tail -3 || true
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --install "build-tools;34.0.0" --sdk_root=$SDK 2>&1 | tail -10 || true
-          
-          # Crea fake 37 se cerca 37
+          CMDLINE=$(find $SDK -name sdkmanager -type f | head -1)
+          echo "sdkmanager: $CMDLINE"
+          yes | $CMDLINE --licenses --sdk_root=$SDK 2>&1 | tail -5 || true
+          yes | $CMDLINE --install "build-tools;34.0.0" --sdk_root=$SDK 2>&1 | tail -10 || true
+
           if [ -d "$SDK/build-tools/34.0.0" ]; then
+            echo "=== Create fake 37.0.0 from 34.0.0 ==="
             rm -rf $SDK/build-tools/37.0.0
             cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/37.0.0
           fi
-          
-          # PATCH AIDL - il fix vero
+
           echo "=== PATCH AIDL ==="
-          find $SDK -name aidl -type f 2>/dev/null | while read AIDL_PATH; do
-            echo "Patcho $AIDL_PATH"
-            if [ ! -f "$AIDL_PATH.real" ]; then
-              mv "$AIDL_PATH" "$AIDL_PATH.real"
-              printf '#!/bin/bash\nDIR="$(dirname "$0")"\nif [ $# -eq 0 ]; then exit 0; fi\nexec "$DIR/aidl.real" "$@"\n' > "$AIDL_PATH"
-              chmod +x "$AIDL_PATH" "$AIDL_PATH.real"
+          find $SDK -name aidl -type f | while read P; do
+            echo "Patching $P"
+            if [ ! -f "$P.real" ]; then
+              mv "$P" "$P.real"
+              printf '#!/bin/bash\nDIR="$(dirname "$0")"\n[ $# -eq 0 ] && exit 0\nexec "$DIR/aidl.real" "$@"\n' > "$P"
+              chmod +x "$P" "$P.real"
             fi
           done
-          
-          find $SDK -name aidl -type f -exec ls -lh {} \;
-          
-          # Build finale
+
+          echo "=== Final build ==="
           buildozer android debug
           EOS
           chmod +x build_inside_docker.sh
-          
+
+          docker pull kivy/buildozer:latest
           docker run --rm \
             -v $PWD:/home/user/hostcwd \
             -w /home/user/hostcwd \
+            --entrypoint bash \
             kivy/buildozer:latest \
-            bash ./build_inside_docker.sh
-          
+            ./build_inside_docker.sh
+
           sudo chown -R $USER:$USER bin 2>/dev/null || true
           ls -lh bin/
 
