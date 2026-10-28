@@ -18,17 +18,17 @@ jobs:
           else
             echo "android.build_tools_version = 34.0.0" >> buildozer.spec
           fi
-          cat buildozer.spec | grep -E "android.api|build_tools"
+          cat buildozer.spec | grep -E "android.api|build_tools|title"
 
-      - name: Build APK con Docker ufficiale Kivy
+      - name: Build APK con Docker ufficiale
         run: |
-          # Usa l'immagine ufficiale, non quella rotta con il PPA
+          docker pull kivy/buildozer:latest
           docker run --rm \
             -v $PWD:/home/user/hostcwd \
-            -v $PWD/.buildozer:/home/user/.buildozer \
-            kivy/buildozer:master \
+            kivy/buildozer:latest \
             android debug
           sudo chown -R $USER:$USER bin .buildozer 2>/dev/null || true
+          ls -lh bin/
 
       - name: Upload APK
         uses: actions/upload-artifact@v5
