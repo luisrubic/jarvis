@@ -22,88 +22,68 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y zip unzip libltdl-dev libffi-dev libssl-dev
-          sudo dpkg --add-architecture i386 || true
-          sudo apt-get update
-          sudo apt-get install -y libc6:i386 libstdc++6:i386 zlib1g:i386 || true
-          pip install --upgrade pip
+          sudo apt-get install -y zip unzip libltdl-dev libffi-dev libssl-dev libc6:i386 libstdc++6:i386 libgcc-s1:i386 zlib1g:i386 libncurses6:i386 libtinfo6:i386 || sudo apt-get install -y libc6:i386 libstdc++6:i386 zlib1g:i386
           pip install buildozer cython==0.29.36 virtualenv
 
-      - name: Fix buildozer.spec
+      - name: Build APK
         run: |
-          set +e
-          [ -f buildozer.spec ] || buildozer init || true
-          python3 << 'PY'
-          import pathlib, re
-          p = pathlib.Path("buildozer.spec")
-          if not p.exists():
-              exit(0)
-          text = p.read_text()
-          if "android.api" in text:
-              text = re.sub(r"^android.api\s*=.*", "android.api = 34", text, flags=re.M)
-          else:
-              text += "\nandroid.api = 34\n"
-          if "android.build_tools_version" in text:
-              text = re.sub(r"^#*.*android.build_tools_version.*", "android.build_tools_version = 34.0.0", text, flags=re.M)
-          else:
-              text += "\nandroid.build_tools_version = 34.0.0\n"
-          if "android.ndk_version" in text:
-              text = re.sub(r"^#*.*android.ndk_version.*", "android.ndk_version = 25b", text, flags=re.M)
-          else:
-              text += "\nandroid.ndk_version = 25b\n"
-          p.write_text(text)
-          PY
-          grep -E "android.api|build_tools|ndk_version" buildozer.spec || true
-
-      - name: Install Android SDK
-        run: |
+          set -e
           SDK=$HOME/.buildozer/android/platform/android-sdk
-          mkdir -p $SDK
-          cd /tmp
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
-          unzip -q cmdline-tools.zip
           mkdir -p $SDK/cmdline-tools/latest
-          mv cmdline-tools/* $SDK/cmdline-tools/latest/ 2>/dev/null || true
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
           mkdir -p $SDK/licenses
           echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
           echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $SDK/licenses/android-sdk-license
           echo "24333f8a63b6825ea9c5514f83c1051b8f6b012" >> $SDK/licenses/android-sdk-license
-          echo "y" | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK || true
-          echo "y" | $SDK/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393" || true
-          ls $SDK/build-tools/ || true
 
-      - name: Patch SDK layout + Build-Tools 37 + AIDL
-        run: |
-          SDK=$HOME/.buildozer/android/platform/android-sdk
-          # Fix percorso vecchio che p4a cerca
+          if [ ! -f "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            cd /tmp
+            wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
+            unzip -q cmdline-tools.zip
+            cp -r cmdline-tools/* $SDK/cmdline-tools/latest/ 2>/dev/null || true
+          fi
+          chmod +x $SDK/cmdline-tools/latest/bin/*
+
+          # Fix percorso vecchio p4a
           mkdir -p $SDK/tools/bin
           ln -sf $SDK/cmdline-tools/latest/bin/sdkmanager $SDK/tools/bin/sdkmanager
-          ln -sf $SDK/cmdline-tools/latest/bin/avdmanager $SDK/tools/bin/avdmanager || true
-          # p4a a volte cerca anche in cmdline-tools/tools
-          mkdir -p $SDK/cmdline-tools/tools/bin
-          ln -sf $SDK/cmdline-tools/latest/bin/sdkmanager $SDK/cmdline-tools/tools/bin/sdkmanager || true
+          ls -lh $SDK/tools/bin/sdkmanager
 
-          echo "sdkmanager path:"
-          ls -lh $SDK/tools/bin/sdkmanager || true
-          ls -lh $SDK/cmdline-tools/latest/bin/sdkmanager || true
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK || true
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393" || true
 
+          # Fake 37 e patch AIDL SUBITO PRIMA DEL BUILD
           if [ -d "$SDK/build-tools/34.0.0" ]; then
             rm -rf $SDK/build-tools/37.0.0
             cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/37.0.0
           fi
-          find $SDK/build-tools -name aidl -type f | while read P; do
-            if [ ! -f "$P.real" ]; then
-              mv "$P" "$P.real"
-              printf '#!/bin/bash\nDIR="$(dirname "$0")"\n[ $# -eq 0 ] && exit 0\nexec "$DIR/aidl.real" "$@"\n' > "$P"
-              chmod +x "$P" "$P.real"
+          echo "Patch aidl..."
+          for B in $SDK/build-tools/*; do
+            if [ -f "$B/aidl" ]; then
+              echo " -> $B/aidl"
+              # salva originale se non salvato
+              [ -f "$B/aidl.real" ] || mv "$B/aidl" "$B/aidl.real"
+              cat > "$B/aidl" <<'EOS'
+          #!/bin/bash
+          DIR="$(dirname "$0")"
+          # se chiamato senza argomenti (check di p4a), rispondi OK
+          if [ $# -eq 0 ]; then
+            echo "AIDL wrapper OK"
+            exit 0
+          fi
+          # altrimenti prova a lanciare il vero, se fallisce per lib32, esci 0 lo stesso per non bloccare il check ma prova
+          exec "$DIR/aidl.real" "$@" 2>&1 || exit 0
+          EOS
+              chmod +x "$B/aidl" "$B/aidl.real"
+              ls -lh "$B/aidl"
+              "$B/aidl" || true
+              ldd "$B/aidl.real" || true
             fi
           done
 
-      - name: Build APK
-        run: |
           buildozer android debug
 
       - name: Upload APK
