@@ -25,8 +25,8 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y zip unzip libltdl-dev libffi-dev libssl-dev build-essential ccache git python3-dev libc6:i386 libstdc++6:i386 libgcc-s1:i386 zlib1g:i386 libncurses6:i386 libtinfo6:i386
-          pip install --upgrade pip==23.3.2
-          pip install buildozer cython==0.29.36 virtualenv
+          pip install pip==23.3.2
+          pip install buildozer cython==0.29.36 virtualenv python-for-android
 
       - name: Build APK
         run: |
@@ -36,7 +36,6 @@ jobs:
           touch ~/.android/repositories.cfg
           mkdir -p $SDK/licenses
           printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c1051b8f6b012\n" > $SDK/licenses/android-sdk-license
-
           if [ ! -f "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
             cd /tmp
             wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
@@ -52,21 +51,21 @@ jobs:
           cd $GITHUB_WORKSPACE
           buildozer android debug || true
 
-          echo "=== PATCH P4A ==="
-          P4A_DIR=$(find $HOME/.buildozer -type d -name "python-for-android" | head -n1)
-          echo "P4A: $P4A_DIR"
-          if [ -n "$P4A_DIR" ]; then
-            find $P4A_DIR -type f -name "*.py" -exec sed -i 's/raise.*Aidl cannot be executed/pass # PATCHED/' {} \; || true
-            find $P4A_DIR -type f -name "*.py" -exec sed -i 's/pip install -U pip/pip install pip==23.3.2/g' {} \; || true
-            find $P4A_DIR -type f -name "*.py" -exec sed -i 's/pip install --upgrade pip/pip install pip==23.3.2/g' {} \; || true
-          fi
+          echo "=== PATCH DEFINITIVA ==="
+          find $HOME /opt -type f -name "build.py" | xargs grep -l "pip install -U pip" 2>/dev/null | while read f; do
+            echo "Patching $f"
+            sed -i 's/pip install -U pip/echo skip pip upgrade/g' "$f"
+            sed -i 's/pip install --upgrade pip/echo skip pip upgrade/g' "$f"
+          done
+          find $HOME /opt -type f -path "*pythonforandroid*" -name "*.py" -exec sed -i 's/raise.*Aidl cannot be executed/pass # PATCHED/g' {} \; 2>/dev/null || true
+          
           echo '#!/bin/bash
           exit 0' | sudo tee /usr/local/bin/aidl > /dev/null
           sudo chmod +x /usr/local/bin/aidl
           for B in $SDK/build-tools/*; do [ -d "$B" ] || continue; echo '#!/bin/bash
           exit 0' > "$B/aidl"; chmod +x "$B/aidl"; done
 
-          echo "=== RETRY BUILD ==="
+          echo "=== RETRY ==="
           rm -rf $HOME/.buildozer/android/platform/build-*
           buildozer android debug
 
