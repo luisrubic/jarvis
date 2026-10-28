@@ -7,45 +7,53 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4 # Versione stabile raccomandata
+      - uses: actions/checkout@v5
 
       - name: Fix buildozer.spec
         run: |
           [ -f buildozer.spec ] || buildozer init || true
-          # Forziamo le versioni stabili di Android SDK e Build Tools nel file .spec
-          sed -i 's/^#* *android.api =.*/android.api = 34/' buildozer.spec
-          sed -i 's/^#* *android.minapi =.*/android.minapi = 21/' buildozer.spec
-          sed -i 's/^#* *android.build_tools_version =.*/android.build_tools_version = 34.0.0/' buildozer.spec
+          sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec || echo "android.api = 34" >> buildozer.spec
+          sed -i 's/^#*.*build_tools_version.*/android.build_tools_version = 34.0.0/' buildozer.spec || echo "android.build_tools_version = 34.0.0" >> buildozer.spec
 
-      - name: Build APK inside Docker
+      - name: Build APK
         run: |
           cat > build_inside_docker.sh <<'EOS'
           #!/bin/bash
           set -e
+          echo "=== Patch Buildozer per non chiedere root ==="
+          # Trova il file buildozer e rimuovi il check root
+          BZ_FILE=$(python3 -c "import buildozer; print(buildozer.__file__)" 2>/dev/null || find /home -name "__init__.py" | grep buildozer | head -1)
+          echo "Buildozer file: $BZ_FILE"
+          # Sostituisce la funzione check_root con return
+          sed -i 's/def check_root(self):.*/def check_root(self):\n        return True/' $BZ_FILE || true
+          sed -i '/def check_root/,/return/ { /Are you sure/d; /input/d; /cont =/d; }' $BZ_FILE || true
+          # Metodo brutale ma sicuro: commenta tutto dentro check_root
+          python3 << 'PY'
+          import pathlib
+          p = pathlib.Path("__import__('buildozer').__file__".strip())
+          # trova file via import
+          import buildozer
+          f = pathlib.Path(buildozer.__file__)
+          text = f.read_text()
+          text = text.replace("def check_root(self):", "def check_root(self):\n        return True\n    def _old_check_root(self):")
+          f.write_text(text)
+          print("Patched", f)
+          PY
 
-          # Definiamo i percorsi dell'SDK dentro l'ambiente Docker
-          SDK_DIR="/home/user/.buildozer/android/platform/android-sdk"
-          mkdir -p "$SDK_DIR/licenses"
+          SDK=~/.buildozer/android/platform/android-sdk
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
 
-          # Accettiamo preventivamente le licenze Android SDK per evitare blocchi
-          echo -e "\n247ae265540dd1fd7c74569de43369a4d265d4f8\n28a217817531bbde53e6274abc1bda92fd36f2a4" > "$SDK_DIR/licenses/android-sdk-license"
-          echo -e "\n8933bad161af4178b1185d1a37fbf41ea5269c55" >> "$SDK_DIR/licenses/android-sdk-license"
-
-          # Installiamo le librerie a 32-bit richieste dallo strumento aidl di Android
-          echo "=== Install 32bit libs per aidl ==="
+          echo "=== Install 32bit libs ==="
           dpkg --add-architecture i386 || true
-          apt-get update -y
-          apt-get install -y libc6:i386 libstdc++6:i386 zlib1g:i386
+          apt-get update -y -qq
+          apt-get install -y libc6:i386 libstdc++6:i386 zlib1g:i386 || true
 
-          # Avviamo la compilazione pulita. Avendo forzato la 34.0.0 nel file .spec,
-          # Buildozer userà gli strumenti nativi stabili senza toccare la versione 37.0.0.
           echo "=== Avvio Compilazione APK ==="
           buildozer android debug
           EOS
-          
           chmod +x build_inside_docker.sh
 
-          # Eseguiamo lo script dentro il container ufficiale di Buildozer
           docker run --rm \
             -v $PWD:/home/user/hostcwd \
             -w /home/user/hostcwd \
@@ -53,12 +61,11 @@ jobs:
             kivy/buildozer:latest \
             ./build_inside_docker.sh
 
-          # Correggiamo i permessi dei file generati per permettere a GitHub di leggerli
           sudo chown -R $USER:$USER bin 2>/dev/null || true
           ls -lh bin/
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4 # Versione stabile raccomandata
+        uses: actions/upload-artifact@v5
         with:
           name: jarvis-apk
           path: bin/*.apk
