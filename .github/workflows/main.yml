@@ -7,65 +7,45 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4 # Versione stabile raccomandata
 
       - name: Fix buildozer.spec
         run: |
           [ -f buildozer.spec ] || buildozer init || true
-          sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec || echo "android.api = 34" >> buildozer.spec
-          if grep -q "android.build_tools_version" buildozer.spec; then
-            sed -i 's/^#*.*build_tools_version.*/android.build_tools_version = 34.0.0/' buildozer.spec
-          else
-            echo "android.build_tools_version = 34.0.0" >> buildozer.spec
-          fi
+          # Forziamo le versioni stabili di Android SDK e Build Tools nel file .spec
+          sed -i 's/^#* *android.api =.*/android.api = 34/' buildozer.spec
+          sed -i 's/^#* *android.minapi =.*/android.minapi = 21/' buildozer.spec
+          sed -i 's/^#* *android.build_tools_version =.*/android.build_tools_version = 34.0.0/' buildozer.spec
 
       - name: Build APK inside Docker
         run: |
           cat > build_inside_docker.sh <<'EOS'
           #!/bin/bash
           set -e
-          SDK=~/.buildozer/android/platform/android-sdk
-          mkdir -p ~/.android
-          touch ~/.android/repositories.cfg
 
-          echo "=== 1st run - download SDK (con y) ==="
-          echo "y" | buildozer android debug || true
-          echo "y" | buildozer android debug || true
+          # Definiamo i percorsi dell'SDK dentro l'ambiente Docker
+          SDK_DIR="/home/user/.buildozer/android/platform/android-sdk"
+          mkdir -p "$SDK_DIR/licenses"
 
-          echo "=== Fix licenses ==="
-          mkdir -p $SDK/licenses
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $SDK/licenses/android-sdk-license
-          echo "24333f8a63b6825ea9c5514f83c1051b8f6b012" >> $SDK/licenses/android-sdk-license
+          # Accettiamo preventivamente le licenze Android SDK per evitare blocchi
+          echo -e "\n247ae265540dd1fd7c74569de43369a4d265d4f8\n28a217817531bbde53e6274abc1bda92fd36f2a4" > "$SDK_DIR/licenses/android-sdk-license"
+          echo -e "\n8933bad161af4178b1185d1a37fbf41ea5269c55" >> "$SDK_DIR/licenses/android-sdk-license"
 
-          CMDLINE=$(find ~/.buildozer -name sdkmanager -type f 2>/dev/null | head -1)
-          echo "sdkmanager: $CMDLINE"
-          if [ -n "$CMDLINE" ]; then
-            echo "y" | $CMDLINE --licenses --sdk_root=$SDK 2>&1 | tail -5 || true
-            echo "y" | $CMDLINE --install "build-tools;34.0.0" --sdk_root=$SDK 2>&1 | tail -10 || true
-          fi
+          # Installiamo le librerie a 32-bit richieste dallo strumento aidl di Android
+          echo "=== Install 32bit libs per aidl ==="
+          dpkg --add-architecture i386 || true
+          apt-get update -y
+          apt-get install -y libc6:i386 libstdc++6:i386 zlib1g:i386
 
-          if [ -d "$SDK/build-tools/34.0.0" ]; then
-            echo "Create fake 37"
-            rm -rf $SDK/build-tools/37.0.0
-            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/37.0.0
-          fi
-
-          echo "=== PATCH AIDL ==="
-          find $SDK -name aidl -type f 2>/dev/null | while read P; do
-            echo "Patching $P"
-            if [ ! -f "$P.real" ]; then
-              mv "$P" "$P.real"
-              printf '#!/bin/bash\nDIR="$(dirname "$0")"\n[ $# -eq 0 ] && exit 0\nexec "$DIR/aidl.real" "$@"\n' > "$P"
-              chmod +x "$P" "$P.real"
-            fi
-          done
-
-          echo "=== Final build ==="
-          echo "y" | buildozer android debug
+          # Avviamo la compilazione pulita. Avendo forzato la 34.0.0 nel file .spec,
+          # Buildozer userà gli strumenti nativi stabili senza toccare la versione 37.0.0.
+          echo "=== Avvio Compilazione APK ==="
+          buildozer android debug
           EOS
+          
           chmod +x build_inside_docker.sh
 
+          # Eseguiamo lo script dentro il container ufficiale di Buildozer
           docker run --rm \
             -v $PWD:/home/user/hostcwd \
             -w /home/user/hostcwd \
@@ -73,11 +53,12 @@ jobs:
             kivy/buildozer:latest \
             ./build_inside_docker.sh
 
+          # Correggiamo i permessi dei file generati per permettere a GitHub di leggerli
           sudo chown -R $USER:$USER bin 2>/dev/null || true
           ls -lh bin/
 
       - name: Upload APK
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4 # Versione stabile raccomandata
         with:
           name: jarvis-apk
           path: bin/*.apk
