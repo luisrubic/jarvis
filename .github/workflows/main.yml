@@ -4,7 +4,7 @@ on:
     branches: [ main ]
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -18,31 +18,27 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Install deps
+        run: |
+          sudo apt update
+          sudo apt install -y zip unzip autoconf automake libtool libtool-bin libltdl-dev pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev
+
       - name: Install Buildozer
         run: |
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Init p4a and Accept Licenses
+      - name: Init and Fix Licenses + build-tools
         run: |
           buildozer init || true
           buildozer android p4a -- --help || true
-          
-          # Patch pip
           find ~/.buildozer -name build.py -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \;
-          
-          # FIX LICENSES - questo è quello che mancava nel tuo log
           SDK="$HOME/.buildozer/android/platform/android-sdk"
-          mkdir -p $SDK/tools/bin
-          echo "Accepting licenses..."
           yes | $SDK/tools/bin/sdkmanager --sdk_root=$SDK --licenses || true
-          yes | $SDK/tools/bin/sdkmanager --sdk_root=$SDK "platform-tools" "build-tools;34.0.0" "build-tools;37.0.0" || true
-          
-          ls $SDK/build-tools/ || echo "build-tools still missing"
+          yes | $SDK/tools/bin/sdkmanager --sdk_root=$SDK "platform-tools" "build-tools;34.0.0" || true
 
       - name: Build APK
-        run: |
-          buildozer android debug --verbose
+        run: buildozer android debug --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v5
