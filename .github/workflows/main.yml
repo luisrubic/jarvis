@@ -25,49 +25,39 @@ jobs:
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Fix buildozer.spec + SDK
+      - name: Fix buildozer.spec + Use System SDK
         run: |
-          echo "--- buildozer.spec PRIMA ---"
-          cat buildozer.spec | grep android || true
-          
-          # AGGIUNGI android.api = 34 se non esiste
-          if ! grep -q "android.api" buildozer.spec; then
-            echo "android.api = 34" >> buildozer.spec
-          else
-            sed -i 's/android.api = 33/android.api = 34/g' buildozer.spec
-          fi
-          
-          # Assicurati anche minapi
-          if ! grep -q "android.minapi" buildozer.spec; then
-            echo "android.minapi = 24" >> buildozer.spec
-          fi
-          
-          echo "--- buildozer.spec DOPO ---"
+          # Aggiunge api 34 se manca
+          grep -q "android.api" buildozer.spec || echo "android.api = 34" >> buildozer.spec
+          sed -i 's/android.api = 33/android.api = 34/g' buildozer.spec || true
+          grep -q "android.minapi" buildozer.spec || echo "android.minapi = 24" >> buildozer.spec
           cat buildozer.spec | grep android
-
+          
           rm -rf ~/.buildozer .buildozer bin
           buildozer init || true
+          
+          # FIX PIP 26
           buildozer android p4a -- --help || true
           find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/pip install -U pip/pip install pip==24.0/g' 2>/dev/null || true
 
-          P4A=~/.buildozer/android/platform/android-sdk
+          # FORZA USO SDK DI SISTEMA (che ha già aidl)
           SYS=/usr/local/lib/android/sdk
-          mkdir -p $P4A/licenses
-          cp $SYS/licenses/* $P4A/licenses/ 2>/dev/null || true
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $P4A/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $P4A/licenses/android-sdk-license
-          echo "24333f8a63b6825ea9c5514f83c1059b8ea4b324" >> $P4A/licenses/android-sdk-license
+          P4A=~/.buildozer/android/platform/android-sdk
+          mkdir -p $(dirname $P4A)
+          rm -rf $P4A
+          ln -s $SYS $P4A
           
-          mkdir -p $P4A/build-tools $P4A/platforms $P4A/platform-tools
-          cp -r $SYS/build-tools/* $P4A/build-tools/ || true
-          cp -r $SYS/platforms/* $P4A/platforms/ || true
-          cp -r $SYS/platform-tools/* $P4A/platform-tools/ || true
-          
-          ls $P4A/platforms/
+          echo "Using system SDK: $SYS"
+          ls $SYS/build-tools/ | tail -5
+          ls $SYS/build-tools/34.0.0/aidl && echo "AIDL TROVATO" || ls $SYS/build-tools/37.0.0/aidl && echo "AIDL TROVATO 37"
+          ls $SYS/platforms/
 
       - name: Build APK
         env:
           ANDROIDAPI: "34"
+          ANDROIDSDK: "/usr/local/lib/android/sdk"
+          ANDROIDNDK: "/usr/local/lib/android/sdk/ndk/27.3.13750724"
+          ANDROIDNDKVER: "27.3.13750724"
         run: buildozer android debug --verbose
 
       - name: Upload APK
