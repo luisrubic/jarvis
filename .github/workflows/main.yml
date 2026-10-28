@@ -14,28 +14,34 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '24'
 
-      - name: Install deps
+      - name: Install system deps
         run: |
-          sudo apt update
-          sudo apt install -y zip unzip autoconf automake libtool libtool-bin libltdl-dev pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev
+          sudo apt-get update
+          sudo apt-get install -y zip unzip libtool libtool-bin autoconf automake cmake pkg-config libffi-dev libssl-dev libltdl-dev libtinfo5
 
       - name: Install Buildozer
         run: |
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Init and Fix Licenses + build-tools
+      - name: Clean and Patch P4A
         run: |
+          rm -rf ~/.buildozer .buildozer bin
           buildozer init || true
+          # Questo crea la struttura
           buildozer android p4a -- --help || true
-          find ~/.buildozer -name build.py -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \;
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
-          yes | $SDK/tools/bin/sdkmanager --sdk_root=$SDK --licenses || true
-          yes | $SDK/tools/bin/sdkmanager --sdk_root=$SDK "platform-tools" "build-tools;34.0.0" || true
+          # FIX PIP 26 -> blocca pip a 24.0 ovunque in p4a
+          find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/pip install -U pip/pip install pip==24.0/g' 2>/dev/null || true
+          find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/--upgrade pip/==24.0/g' 2>/dev/null || true
+          # FIX LICENZE + AIDL
+          SDK=~/.buildozer/android/platform/android-sdk
+          SYS_SDK=/usr/local/lib/android/sdk
+          mkdir -p $SDK/licenses
+          cp $SYS_SDK/licenses/* $SDK/licenses/ 2>/dev/null || true
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
+          $SYS_SDK/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK "platform-tools" "build-tools;34.0.0" || true
+          ls $SDK/build-tools/34.0.0/aidl && echo "AIDL OK"
 
       - name: Build APK
         run: buildozer android debug --verbose
