@@ -1,22 +1,32 @@
 [app]
-title = JARVIS
+title = Jarvis
 package.name = jarvis
-package.domain = com.jarvis.app
+package.domain = org.jarvis
+
 source.dir = .
-source.include_exts = py,png,jpg,kv,json
+source.include_exts = py,png,jpg,kv,atlas,json
+
 version = 0.1
-requirements = python3,kivy,plyer,pyjnius,pillow,pytesseract,requests,SpeechRecognition
+version.regex = __version__ = ['"]([^'"]+)['"]
+version.filename = %(source.dir)s/main.py
+
+requirements = python3,kivy,plyer,pyjnius,pillow
+
 orientation = portrait
+fullscreen = 0
 
 [buildozer]
 log_level = 2
 
 [app:android]
-permissions = CALL_PHONE,SEND_SMS,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,CAMERA,RECORD_AUDIO,VIBRATE,INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
-android.api = 33
-android.minapi = 21
-android.ndk = 25b
-android.sdk = 33
-android.build_tools_version = 33.0.2
-android.accept_sdk_license_agreement = True
 android.archs = arm64-v8a, armeabi-v7a
+android.accept_sdk_license_agreement = True
+
+# Non mettere qui pytesseract, requests, SpeechRecognition!
+# Li aggiungeremo dopo dentro main.py
+
+p4a.bootstrap = sdl2
+p4a.port = 8000
+
+[app:ios]
+# lascia vuoto
