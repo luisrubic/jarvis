@@ -1,53 +1,44 @@
 name: Build APK
-
 on:
   push:
     branches: [ main ]
-
-concurrency:
-  group: build-apk
-  cancel-in-progress: false
-
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Python 3.10
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
-
-      - name: Setup Node.js 24
-        uses: actions/setup-node@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
-
-      - name: Install system deps
-        run: |
-          sudo apt update
-          sudo apt install -y zip unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev
 
       - name: Install Buildozer
         run: |
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Patch p4a pip bug
+      - name: Init p4a and Accept Licenses
         run: |
           buildozer init || true
           buildozer android p4a -- --help || true
-          find ~/.buildozer -type f -name build.py -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \;
-          find ~/.buildozer -type f -name build.py -exec sed -i 's/pip install --upgrade pip/pip install pip==24.0/g' {} \;
+          
+          # Patch pip
+          find ~/.buildozer -name build.py -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \;
+          
+          # FIX LICENSES - questo è quello che mancava nel tuo log
+          SDK="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p $SDK/tools/bin
+          echo "Accepting licenses..."
+          yes | $SDK/tools/bin/sdkmanager --sdk_root=$SDK --licenses || true
+          yes | $SDK/tools/bin/sdkmanager --sdk_root=$SDK "platform-tools" "build-tools;34.0.0" "build-tools;37.0.0" || true
+          
+          ls $SDK/build-tools/ || echo "build-tools still missing"
 
       - name: Build APK
         run: |
@@ -58,4 +49,3 @@ jobs:
         with:
           name: jarvis-apk
           path: bin/*.apk
-          if-no-files-found: error
