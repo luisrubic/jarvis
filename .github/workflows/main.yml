@@ -25,52 +25,49 @@ jobs:
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Fix SDK - Copy full SDK from system
+      - name: Fix buildozer.spec + SDK
         run: |
+          echo "--- buildozer.spec PRIMA ---"
+          cat buildozer.spec | grep android || true
+          
+          # AGGIUNGI android.api = 34 se non esiste
+          if ! grep -q "android.api" buildozer.spec; then
+            echo "android.api = 34" >> buildozer.spec
+          else
+            sed -i 's/android.api = 33/android.api = 34/g' buildozer.spec
+          fi
+          
+          # Assicurati anche minapi
+          if ! grep -q "android.minapi" buildozer.spec; then
+            echo "android.minapi = 24" >> buildozer.spec
+          fi
+          
+          echo "--- buildozer.spec DOPO ---"
+          cat buildozer.spec | grep android
+
           rm -rf ~/.buildozer .buildozer bin
           buildozer init || true
           buildozer android p4a -- --help || true
-          
-          # FIX PIP 26
           find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/pip install -U pip/pip install pip==24.0/g' 2>/dev/null || true
-          find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/--upgrade pip/==24.0/g' 2>/dev/null || true
 
           P4A=~/.buildozer/android/platform/android-sdk
           SYS=/usr/local/lib/android/sdk
-          
           mkdir -p $P4A/licenses
           cp $SYS/licenses/* $P4A/licenses/ 2>/dev/null || true
           echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $P4A/licenses/android-sdk-license
           echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $P4A/licenses/android-sdk-license
           echo "24333f8a63b6825ea9c5514f83c1059b8ea4b324" >> $P4A/licenses/android-sdk-license
-          echo "y" > $P4A/licenses/android-sdk-preview-license || true
-
-          echo "Copying SDK components from $SYS to $P4A"
-          ls $SYS/build-tools/ -l
-          ls $SYS/platforms/ -l
           
-          mkdir -p $P4A/build-tools
+          mkdir -p $P4A/build-tools $P4A/platforms $P4A/platform-tools
           cp -r $SYS/build-tools/* $P4A/build-tools/ || true
-          
-          mkdir -p $P4A/platform-tools
+          cp -r $SYS/platforms/* $P4A/platforms/ || true
           cp -r $SYS/platform-tools/* $P4A/platform-tools/ || true
           
-          mkdir -p $P4A/platforms
-          cp -r $SYS/platforms/* $P4A/platforms/ || true
-          
-          # Se android-33 non c'è nel sistema, copia android-34 e rinominalo
-          if [ ! -d "$P4A/platforms/android-33" ]; then
-            if [ -d "$SYS/platforms/android-34" ]; then
-              cp -r $SYS/platforms/android-34 $P4A/platforms/android-33
-            fi
-          fi
-          
-          echo "=== CHECK ==="
-          ls $P4A/build-tools/34.0.0/ | grep aidl
           ls $P4A/platforms/
-          echo "SDK FIX DONE"
 
       - name: Build APK
+        env:
+          ANDROIDAPI: "34"
         run: buildozer android debug --verbose
 
       - name: Upload APK
