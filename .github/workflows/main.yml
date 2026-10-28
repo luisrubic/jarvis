@@ -9,60 +9,81 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip zip unzip openjdk-17-jdk libltdl-dev libffi-dev libssl-dev libbz2-dev libncurses5-dev libsqlite3-dev libreadline-dev zlib1g-dev libtinfo5 || sudo apt-get install -y libtinfo6
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y libc6:i386 libstdc++6:i386 zlib1g:i386
+          pip install --upgrade pip
+          pip install buildozer cython==0.29.36 virtualenv
+
       - name: Fix buildozer.spec
         run: |
-          [ -f buildozer.spec ] || buildozer init || true
+          [ -f buildozer.spec ] || buildozer init
           sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec || echo "android.api = 34" >> buildozer.spec
-          sed -i 's/^#*.*build_tools_version.*/android.build_tools_version = 34.0.0/' buildozer.spec || echo "android.build_tools_version = 34.0.0" >> buildozer.spec
+          sed -i 's/^#*.*android.build_tools_version.*/android.build_tools_version = 34.0.0/' buildozer.spec || echo "android.build_tools_version = 34.0.0" >> buildozer.spec
+          sed -i 's/^#*.*android.ndk_version.*/android.ndk_version = 25b/' buildozer.spec || echo "android.ndk_version = 25b" >> buildozer.spec
+          grep -E "android.api|build_tools|ndk_version" buildozer.spec
+
+      - name: Install Android SDK
+        run: |
+          SDK=$HOME/.buildozer/android/platform/android-sdk
+          mkdir -p $SDK
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
+          unzip -q cmdline-tools.zip
+          mkdir -p $SDK/cmdline-tools/latest
+          mv cmdline-tools/* $SDK/cmdline-tools/latest/ 2>/dev/null || mv cmdline-tools $SDK/cmdline-tools/latest/ || true
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          mkdir -p $SDK/licenses
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $SDK/licenses/android-sdk-license
+          echo "24333f8a63b6825ea9c5514f83c1051b8f6b012" >> $SDK/licenses/android-sdk-license
+          echo "y" | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK || true
+          echo "y" | $SDK/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393" || true
+
+      - name: Patch Build-Tools 37 + AIDL
+        run: |
+          SDK=$HOME/.buildozer/android/platform/android-sdk
+          echo "SDK contents:"
+          ls $SDK/build-tools/ || true
+          # Crea fake 37.0.0 da 34.0.0 perché p4a lo cerca
+          if [ -d "$SDK/build-tools/34.0.0" ]; then
+            rm -rf $SDK/build-tools/37.0.0
+            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/37.0.0
+            echo "Fake 37 creato"
+          fi
+          # PATCH AIDL definitivo
+          find $SDK/build-tools -name aidl -type f | while read P; do
+            echo "Patch $P"
+            if [ ! -f "$P.real" ]; then
+              mv "$P" "$P.real"
+              echo '#!/bin/bash
+              DIR="$(dirname "$0")"
+              if [ $# -eq 0 ]; then exit 0; fi
+              exec "$DIR/aidl.real" "$@"' > "$P"
+              chmod +x "$P" "$P.real"
+            fi
+            $P --help 2>&1 | head -3 || true
+          done
 
       - name: Build APK
         run: |
-          cat > build_inside_docker.sh <<'EOS'
-          #!/bin/bash
-          set -e
-          echo "=== Patch Buildozer per non chiedere root ==="
-          # Trova il file buildozer e rimuovi il check root
-          BZ_FILE=$(python3 -c "import buildozer; print(buildozer.__file__)" 2>/dev/null || find /home -name "__init__.py" | grep buildozer | head -1)
-          echo "Buildozer file: $BZ_FILE"
-          # Sostituisce la funzione check_root con return
-          sed -i 's/def check_root(self):.*/def check_root(self):\n        return True/' $BZ_FILE || true
-          sed -i '/def check_root/,/return/ { /Are you sure/d; /input/d; /cont =/d; }' $BZ_FILE || true
-          # Metodo brutale ma sicuro: commenta tutto dentro check_root
-          python3 << 'PY'
-          import pathlib
-          p = pathlib.Path("__import__('buildozer').__file__".strip())
-          # trova file via import
-          import buildozer
-          f = pathlib.Path(buildozer.__file__)
-          text = f.read_text()
-          text = text.replace("def check_root(self):", "def check_root(self):\n        return True\n    def _old_check_root(self):")
-          f.write_text(text)
-          print("Patched", f)
-          PY
-
-          SDK=~/.buildozer/android/platform/android-sdk
-          mkdir -p ~/.android
-          touch ~/.android/repositories.cfg
-
-          echo "=== Install 32bit libs ==="
-          dpkg --add-architecture i386 || true
-          apt-get update -y -qq
-          apt-get install -y libc6:i386 libstdc++6:i386 zlib1g:i386 || true
-
-          echo "=== Avvio Compilazione APK ==="
           buildozer android debug
-          EOS
-          chmod +x build_inside_docker.sh
-
-          docker run --rm \
-            -v $PWD:/home/user/hostcwd \
-            -w /home/user/hostcwd \
-            --entrypoint bash \
-            kivy/buildozer:latest \
-            ./build_inside_docker.sh
-
-          sudo chown -R $USER:$USER bin 2>/dev/null || true
-          ls -lh bin/
 
       - name: Upload APK
         uses: actions/upload-artifact@v5
