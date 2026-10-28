@@ -25,39 +25,41 @@ jobs:
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Fix buildozer.spec + Use System SDK
+      - name: Fix SDK - Use System SDK + fix sdkmanager path
         run: |
-          # Aggiunge api 34 se manca
           grep -q "android.api" buildozer.spec || echo "android.api = 34" >> buildozer.spec
           sed -i 's/android.api = 33/android.api = 34/g' buildozer.spec || true
           grep -q "android.minapi" buildozer.spec || echo "android.minapi = 24" >> buildozer.spec
-          cat buildozer.spec | grep android
           
           rm -rf ~/.buildozer .buildozer bin
           buildozer init || true
-          
-          # FIX PIP 26
           buildozer android p4a -- --help || true
           find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/pip install -U pip/pip install pip==24.0/g' 2>/dev/null || true
 
-          # FORZA USO SDK DI SISTEMA (che ha già aidl)
           SYS=/usr/local/lib/android/sdk
           P4A=~/.buildozer/android/platform/android-sdk
+          
+          # Linka SDK di sistema
           mkdir -p $(dirname $P4A)
           rm -rf $P4A
           ln -s $SYS $P4A
           
-          echo "Using system SDK: $SYS"
-          ls $SYS/build-tools/ | tail -5
-          ls $SYS/build-tools/34.0.0/aidl && echo "AIDL TROVATO" || ls $SYS/build-tools/37.0.0/aidl && echo "AIDL TROVATO 37"
-          ls $SYS/platforms/
+          # FIX sdkmanager vecchio percorso -> nuovo
+          mkdir -p $SYS/tools/bin
+          ln -sf $SYS/cmdline-tools/latest/bin/sdkmanager $SYS/tools/bin/sdkmanager
+          ln -sf $SYS/cmdline-tools/latest/bin/avdmanager $SYS/tools/bin/avdmanager || true
+          chmod +x $SYS/tools/bin/sdkmanager
+          
+          echo "Checking sdkmanager:"
+          ls -l $SYS/tools/bin/sdkmanager
+          $SYS/tools/bin/sdkmanager --version
+          ls $SYS/build-tools/34.0.0/aidl && echo "AIDL OK"
 
       - name: Build APK
         env:
           ANDROIDAPI: "34"
           ANDROIDSDK: "/usr/local/lib/android/sdk"
           ANDROIDNDK: "/usr/local/lib/android/sdk/ndk/27.3.13750724"
-          ANDROIDNDKVER: "27.3.13750724"
         run: buildozer android debug --verbose
 
       - name: Upload APK
