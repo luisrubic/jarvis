@@ -23,7 +23,7 @@ jobs:
           pip install --upgrade pip
           pip install buildozer Cython==0.29.33
 
-      - name: Install Android SDK
+      - name: Fix Android SDK paths
         run: |
           SDK=$HOME/.buildozer/android/platform/android-sdk
           mkdir -p $SDK/cmdline-tools
@@ -31,10 +31,9 @@ jobs:
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
           unzip -q tools.zip
           mv cmdline-tools latest
-          # Fix vecchio percorso che vuole buildozer
-          mkdir -p $SDK/tools/bin
-          cp $SDK/cmdline-tools/latest/bin/sdkmanager $SDK/tools/bin/
-          cp -r $SDK/cmdline-tools/latest/lib $SDK/tools/bin/ || true
+          # Ora creiamo ANCHE la cartella vecchia che vuole buildozer, con tutto dentro
+          rm -rf $SDK/tools
+          cp -r latest $SDK/tools
           export ANDROID_HOME=$SDK
           export PATH=$SDK/cmdline-tools/latest/bin:$PATH
           yes | sdkmanager --licenses
