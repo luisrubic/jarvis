@@ -2,20 +2,23 @@ name: Build APK
 on:
   push:
     branches: [ main ]
+
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
+
       - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
+
       - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install deps
+      - name: Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y zip unzip libtool libtool-bin autoconf automake cmake pkg-config libffi-dev libssl-dev libltdl-dev libtinfo5 libc6-i386 lib32stdc++6 lib32z1
@@ -27,45 +30,61 @@ jobs:
 
       - name: Build APK
         run: |
-          # Fix pip 26
-          grep -q "android.api" buildozer.spec || echo "android.api = 34" >> buildozer.spec
-          sed -i 's/android.api = 33/android.api = 34/g' buildozer.spec || true
+          # --- 1. Config buildozer.spec ---
+          sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec || echo "android.api = 34" >> buildozer.spec
+          sed -i 's/^android.minapi =.*/android.minapi = 24/' buildozer.spec || echo "android.minapi = 24" >> buildozer.spec
+          sed -i 's/^android.ndk =.*/android.ndk = 25b/' buildozer.spec || true
+
           rm -rf .buildozer bin
           buildozer init || true
-          find ~/.buildozer -type f -name "*.py" | xargs sed -i 's/pip install -U pip/pip install pip==24.0/g' 2>/dev/null || true
-          
-          # Accetta licenze PRIMA
-          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-          echo "y" | ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          
-          # Avvia buildozer una volta per fargli scaricare SDK, poi lo patchiamo
-          buildozer android debug || true
-          
-          # ORA PATCHIAMO DOPO CHE HA SCARICATO
+
+          # --- 2. PATCH PIP 26 -> Il bug che ti ha dato 51k righe ---
+          # Questo DEVE essere fatto prima e dopo il download dell'SDK
+          find ~/.buildozer -type f -name "*.py" -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \; 2>/dev/null || true
+
+          # --- 3. Primo avvio per scaricare SDK (fallirà su aidl, è VOLUTO) ---
+          echo "y" | buildozer android debug || echo "Primo avvio fallito come previsto, ora patcho..."
+
+          # --- 4. FIX SDK DEFINITIVO ---
           SYS=/usr/local/lib/android/sdk
           P4A=~/.buildozer/android/platform/android-sdk
-          mkdir -p $P4A/build-tools
-          rm -rf $P4A/build-tools/37.0.0 $P4A/build-tools/36* $P4A/build-tools/35*
+
+          # Licenze
+          mkdir -p $P4A/licenses
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $P4A/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $P4A/licenses/android-sdk-license
+          echo "y" | $P4A/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+
+          # build-tools: cancella 37.0.0 che da "Aidl cannot be executed" e tieni solo 34.0.0
+          ls $P4A/build-tools/ || echo "build-tools mancante"
+          rm -rf $P4A/build-tools/37.* $P4A/build-tools/36.* $P4A/build-tools/35.*
+          
           if [ ! -d "$P4A/build-tools/34.0.0" ]; then
+            echo "Copio 34.0.0 dal sistema..."
+            mkdir -p $P4A/build-tools
             cp -r $SYS/build-tools/34.0.0 $P4A/build-tools/
           fi
-          
-          # Patch AIDL wrapper
+
+          # Patch AIDL wrapper: se chiamato senza args torna 0 invece di 1
           for d in $P4A/build-tools/*; do
             if [ -f "$d/aidl" ] && [ ! -f "$d/aidl.real" ]; then
+              echo "Patching $d/aidl"
               mv $d/aidl $d/aidl.real
               printf '#!/bin/bash\nDIR="$(dirname "$0")"\nif [ $# -eq 0 ]; then exit 0; fi\nexec "$DIR/aidl.real" "$@"\n' > $d/aidl
               chmod +x $d/aidl $d/aidl.real
             fi
           done
-          
-          echo "=== FINAL CHECK ==="
+
+          echo "=== CHECK FINALE ==="
           ls $P4A/build-tools/
-          $P4A/build-tools/34.0.0/aidl && echo "AIDL OK"
-          
-          # Build finale vera
+          $P4A/build-tools/34.0.0/aidl
+          echo "Exit code aidl: $? (deve essere 0)"
+
+          # Re-patch pip perché buildozer ha ricreato i file
+          find ~/.buildozer -type f -name "*.py" -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \; 2>/dev/null || true
+          find .buildozer -type f -name "*.py" -exec sed -i 's/pip install -U pip/pip install pip==24.0/g' {} \; 2>/dev/null || true
+
+          # --- 5. BUILD FINALE SENZA --verbose (per non superare 27k righe) ---
           buildozer android debug
 
       - name: Upload APK
