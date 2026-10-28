@@ -36,27 +36,15 @@ jobs:
           P4A=~/.buildozer/android/platform/python-for-android
           SDK=~/.buildozer/android/platform/android-sdk
 
-          # --- PRIMO AVVIO per scaricare p4a e SDK ---
-          buildozer android debug || echo "primo avvio fallito ok"
+          # Primo avvio per scaricare SDK (fallisce ed è ok)
+          buildozer android debug || true
 
-          # --- PATCH PIP ROTTO - QUESTO E' IL FIX ---
-          echo "Patching p4a..."
+          # --- FIX PIP 26 ---
           if [ -d "$P4A" ]; then
-            # 1. Disabilita completamente upgrade pip
-            find $P4A -type f -name "build.py" -exec sed -i 's/Upgrade pip to latest version/SKIP pip upgrade/g' {} \; 2>/dev/null || true
-            find $P4A -type f -name "build.py" -exec sed -i 's/shprint(sh.bash.*pip install -U pip.*/        print("SKIP pip upgrade")\n        continue/g' {} \; 2>/dev/null || true
             find $P4A -type f -name "*.py" -exec sed -i 's/pip install -U pip/echo SKIP pip/g' {} \; 2>/dev/null || true
             find $P4A -type f -name "*.py" -exec sed -i 's/pip install pip==24.0/echo SKIP pip/g' {} \; 2>/dev/null || true
-            
-            # 2. Patch diretto file build.py (riga 880 circa)
-            BUILD_PY="$P4A/pythonforandroid/build.py"
-            if [ -f "$BUILD_PY" ]; then
-              # Sostituisce il blocco che fa pip install -U pip
-              sed -i 's/source venv\/bin\/activate && pip install.*/source venv\/bin\/activate \&\& echo SKIP pip upgrade/g' "$BUILD_PY" || true
-            fi
+            sed -i 's/source venv\/bin\/activate && pip install.*/source venv\/bin\/activate \&\& echo SKIP pip upgrade/g' $P4A/pythonforandroid/build.py 2>/dev/null || true
           fi
-
-          # Cancella venv rotto con pip 26
           rm -rf ~/.buildozer/android/platform/build-*/build/venv
           rm -rf .buildozer/android/platform/build-*/build/venv
 
@@ -64,26 +52,34 @@ jobs:
           mkdir -p $SDK/licenses
           echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
           echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $SDK/licenses/android-sdk-license
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
-          
-          rm -rf $SDK/build-tools/37.* $SDK/build-tools/36.* $SDK/build-tools/35.*
-          if [ ! -d "$SDK/build-tools/34.0.0" ]; then
-            cp -r /usr/local/lib/android/sdk/build-tools/34.0.0 $SDK/build-tools/ 2>/dev/null || true
-          fi
+          echo "79120722343a6f314e0719f86303653b55555b55" > $SDK/licenses/android-sdk-preview-license || true
 
-          for d in $SDK/build-tools/*; do
-            if [ -f "$d/aidl" ] && [ ! -f "$d/aidl.real" ]; then
-              mv $d/aidl $d/aidl.real
-              printf '#!/bin/bash\nDIR="$(dirname "$0")"\nif [ $# -eq 0 ]; then exit 0; fi\nexec "$DIR/aidl.real" "$@"\n' > $d/aidl
-              chmod +x $d/aidl $d/aidl.real
+          # Installa esplicitamente build-tools 34.0.0
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+          $SDK/cmdline-tools/latest/bin/sdkmanager --install "build-tools;34.0.0" "platform-tools" 2>&1 | tail -20 || true
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+
+          echo "=== CERCO BUILD-TOOLS ==="
+          find $SDK -type d -name "build-tools" | head -5
+          ls -R $SDK/build-tools 2>&1 | head -100 || ls -R ~/.buildozer/android/platform/android-sdk 2>&1 | grep -i aidl | head -20
+
+          # Trova aidl ovunque sia e patchalo
+          echo "=== PATCH AIDL OVUNQUE ==="
+          find $SDK -name aidl -type f 2>/dev/null | while read AIDL_PATH; do
+            echo "Trovato aidl: $AIDL_PATH"
+            if [ -f "$AIDL_PATH" ] && [ ! -f "$AIDL_PATH.real" ]; then
+              mv "$AIDL_PATH" "$AIDL_PATH.real"
+              printf '#!/bin/bash\nDIR="$(dirname "$0")"\nif [ $# -eq 0 ]; then exit 0; fi\nexec "$DIR/aidl.real" "$@"\n' > "$AIDL_PATH"
+              chmod +x "$AIDL_PATH" "$AIDL_PATH.real"
+              echo "Patchato: $AIDL_PATH"
             fi
           done
 
-          echo "=== FINAL CHECK ==="
-          ls $SDK/build-tools/
-          $SDK/build-tools/34.0.0/aidl; echo "AIDL exit: $?"
+          # Test
+          find $SDK -name aidl -type f -exec ls -lh {} \; 2>/dev/null
+          find $SDK -name aidl -type f -exec {} \; -exec echo " exit:$?" \; 2>/dev/null | head -20 || true
 
-          # --- BUILD FINALE SENZA --verbose ---
+          echo "=== BUILD FINALE ==="
           buildozer android debug
 
       - name: Upload APK
