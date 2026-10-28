@@ -29,39 +29,62 @@ jobs:
       - name: Build APK
         run: |
           set -e
-          sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec || echo "android.api = 34" >> buildozer.spec
           rm -rf .buildozer bin
           buildozer init || true
+          sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec
+          echo "android.build_tools_version = 34.0.0" >> buildozer.spec
+
           P4A=~/.buildozer/android/platform/python-for-android
           SDK=~/.buildozer/android/platform/android-sdk
           SYS_SDK=/usr/local/lib/android/sdk
+
           buildozer android debug || true
+
+          # 1. LICENZE
           mkdir -p $SDK/licenses
           mkdir -p ~/.android
           touch ~/.android/repositories.cfg
-          if [ -d "$SYS_SDK/licenses" ]; then cp -r $SYS_SDK/licenses/* $SDK/licenses/ 2>/dev/null || true; fi
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $SDK/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $SDK/licenses/android-sdk-license
-          echo "24333f8a63b6825ea9c5514f83c1051b8f6b012" >> $SDK/licenses/android-sdk-license
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses 2>&1 | tail -5 || true
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK 2>&1 | tail -5 || true
+          cp -r $SYS_SDK/licenses/* $SDK/licenses/ || true
+          chmod 777 $SDK/licenses/* || true
+
+          # 2. PATCH P4A: sostituisci 37.0.0 con 34.0.0 ovunque
+          echo "=== PATCH P4A 37 -> 34 ==="
           if [ -d "$P4A" ]; then
+            grep -r "37.0.0" $P4A --include="*.py" | head -10 || true
+            find $P4A -type f -name "*.py" -exec sed -i 's/37\.0\.0/34.0.0/g' {} \; 2>/dev/null || true
+            find $P4A -type f -name "*.py" -exec sed -i 's/36\.0\.0/34.0.0/g' {} \; 2>/dev/null || true
+            find $P4A -type f -name "*.py" -exec sed -i 's/35\.0\.0/34.0.0/g' {} \; 2>/dev/null || true
             find $P4A -type f -name "*.py" -exec sed -i 's/pip install -U pip/echo SKIP pip/g' {} \; 2>/dev/null || true
-            find $P4A -type f -name "*.py" -exec sed -i 's/pip install pip==24.0/echo SKIP pip/g' {} \; 2>/dev/null || true
-            sed -i 's/source venv\/bin\/activate && pip install.*/source venv\/bin\/activate \&\& echo SKIP pip upgrade/g' $P4A/pythonforandroid/build.py 2>/dev/null || true
           fi
           rm -rf ~/.buildozer/android/platform/build-*/build/venv
-          rm -rf .buildozer/android/platform/build-*/build/venv
+
+          # 3. INSTALLA 34.0.0 e CREA FAKE 37.0.0
+          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK 2>&1 | tail -5 || true
           yes | $SDK/cmdline-tools/latest/bin/sdkmanager --install "build-tools;34.0.0" --sdk_root=$SDK 2>&1 | tail -20 || true
-          ls -lh $SDK/build-tools/ || true
-          ls -lh $SDK/build-tools/34.0.0/ 2>&1 | head -20 || true
-          find $SDK -name aidl -type f 2>/dev/null | while read AIDL_PATH; do
+
+          mkdir -p $SDK/build-tools
+          if [ -d "$SDK/build-tools/34.0.0" ]; then
+            echo "Creo fake 37.0.0 da 34.0.0"
+            rm -rf $SDK/build-tools/37.0.0
+            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/37.0.0
+            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/36.0.0 2>/dev/null || true
+            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/35.0.0 2>/dev/null || true
+          fi
+
+          ls -lh $SDK/build-tools/
+          ls -lh $SDK/build-tools/34.0.0/ | head -10
+
+          # 4. PATCH AIDL
+          find $SDK/build-tools -name aidl -type f | while read AIDL_PATH; do
             if [ ! -f "$AIDL_PATH.real" ]; then
               mv "$AIDL_PATH" "$AIDL_PATH.real"
               printf '#!/bin/bash\nDIR="$(dirname "$0")"\nif [ $# -eq 0 ]; then exit 0; fi\nexec "$DIR/aidl.real" "$@"\n' > "$AIDL_PATH"
               chmod +x "$AIDL_PATH" "$AIDL_PATH.real"
+              echo "Patchato $AIDL_PATH"
             fi
           done
+
+          echo "=== BUILD FINALE ==="
           buildozer android debug
 
       - name: Upload APK
