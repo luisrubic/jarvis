@@ -30,6 +30,32 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython==0.29.36 virtualenv
 
+      - name: Fix buildozer.spec
+        run: |
+          set +e
+          [ -f buildozer.spec ] || buildozer init || true
+          python3 << 'PY'
+          import pathlib, re
+          p = pathlib.Path("buildozer.spec")
+          if not p.exists():
+              exit(0)
+          text = p.read_text()
+          if "android.api" in text:
+              text = re.sub(r"^android.api\s*=.*", "android.api = 34", text, flags=re.M)
+          else:
+              text += "\nandroid.api = 34\n"
+          if "android.build_tools_version" in text:
+              text = re.sub(r"^#*.*android.build_tools_version.*", "android.build_tools_version = 34.0.0", text, flags=re.M)
+          else:
+              text += "\nandroid.build_tools_version = 34.0.0\n"
+          if "android.ndk_version" in text:
+              text = re.sub(r"^#*.*android.ndk_version.*", "android.ndk_version = 25b", text, flags=re.M)
+          else:
+              text += "\nandroid.ndk_version = 25b\n"
+          p.write_text(text)
+          PY
+          grep -E "android.api|build_tools|ndk_version" buildozer.spec || true
+
       - name: Install Android SDK
         run: |
           SDK=$HOME/.buildozer/android/platform/android-sdk
@@ -47,10 +73,23 @@ jobs:
           echo "24333f8a63b6825ea9c5514f83c1051b8f6b012" >> $SDK/licenses/android-sdk-license
           echo "y" | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK || true
           echo "y" | $SDK/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393" || true
+          ls $SDK/build-tools/ || true
 
-      - name: Patch Build-Tools 37 + AIDL
+      - name: Patch SDK layout + Build-Tools 37 + AIDL
         run: |
           SDK=$HOME/.buildozer/android/platform/android-sdk
+          # Fix percorso vecchio che p4a cerca
+          mkdir -p $SDK/tools/bin
+          ln -sf $SDK/cmdline-tools/latest/bin/sdkmanager $SDK/tools/bin/sdkmanager
+          ln -sf $SDK/cmdline-tools/latest/bin/avdmanager $SDK/tools/bin/avdmanager || true
+          # p4a a volte cerca anche in cmdline-tools/tools
+          mkdir -p $SDK/cmdline-tools/tools/bin
+          ln -sf $SDK/cmdline-tools/latest/bin/sdkmanager $SDK/cmdline-tools/tools/bin/sdkmanager || true
+
+          echo "sdkmanager path:"
+          ls -lh $SDK/tools/bin/sdkmanager || true
+          ls -lh $SDK/cmdline-tools/latest/bin/sdkmanager || true
+
           if [ -d "$SDK/build-tools/34.0.0" ]; then
             rm -rf $SDK/build-tools/37.0.0
             cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/37.0.0
