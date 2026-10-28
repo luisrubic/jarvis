@@ -25,7 +25,7 @@ jobs:
           pip install --upgrade pip==24.0
           pip install buildozer cython==0.29.36
 
-      - name: Fix SDK - Use System SDK + fix sdkmanager path
+      - name: Fix SDK - Create writable SDK with links
         run: |
           grep -q "android.api" buildozer.spec || echo "android.api = 34" >> buildozer.spec
           sed -i 's/android.api = 33/android.api = 34/g' buildozer.spec || true
@@ -39,27 +39,37 @@ jobs:
           SYS=/usr/local/lib/android/sdk
           P4A=~/.buildozer/android/platform/android-sdk
           
-          # Linka SDK di sistema
-          mkdir -p $(dirname $P4A)
+          # Crea SDK scrivibile tuo, non di sistema
           rm -rf $P4A
-          ln -s $SYS $P4A
+          mkdir -p $P4A/tools/bin
+          mkdir -p $P4A/licenses
           
-          # FIX sdkmanager vecchio percorso -> nuovo
-          mkdir -p $SYS/tools/bin
-          ln -sf $SYS/cmdline-tools/latest/bin/sdkmanager $SYS/tools/bin/sdkmanager
-          ln -sf $SYS/cmdline-tools/latest/bin/avdmanager $SYS/tools/bin/avdmanager || true
-          chmod +x $SYS/tools/bin/sdkmanager
+          # Linka componenti dal sistema
+          ln -s $SYS/build-tools $P4A/build-tools
+          ln -s $SYS/platforms $P4A/platforms
+          ln -s $SYS/platform-tools $P4A/platform-tools
+          ln -s $SYS/cmdline-tools $P4A/cmdline-tools
+          ln -s $SYS/emulator $P4A/emulator 2>/dev/null || true
+          ln -s $SYS/extras $P4A/extras 2>/dev/null || true
           
-          echo "Checking sdkmanager:"
-          ls -l $SYS/tools/bin/sdkmanager
-          $SYS/tools/bin/sdkmanager --version
-          ls $SYS/build-tools/34.0.0/aidl && echo "AIDL OK"
+          # sdkmanager vecchio percorso
+          ln -s $SYS/cmdline-tools/latest/bin/sdkmanager $P4A/tools/bin/sdkmanager
+          
+          # Licenze
+          cp $SYS/licenses/* $P4A/licenses/ 2>/dev/null || true
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $P4A/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $P4A/licenses/android-sdk-license
+          
+          echo "=== CHECK ==="
+          ls -l $P4A/
+          ls -l $P4A/tools/bin/
+          ls $P4A/build-tools/ | head
+          ls $P4A/build-tools/34.0.0/ | grep aidl
+          $P4A/build-tools/34.0.0/aidl --version && echo "AIDL OK"
 
       - name: Build APK
         env:
           ANDROIDAPI: "34"
-          ANDROIDSDK: "/usr/local/lib/android/sdk"
-          ANDROIDNDK: "/usr/local/lib/android/sdk/ndk/27.3.13750724"
         run: buildozer android debug --verbose
 
       - name: Upload APK
