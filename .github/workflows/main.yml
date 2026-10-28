@@ -25,7 +25,7 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y zip unzip libltdl-dev libffi-dev libssl-dev build-essential ccache git python3-dev libc6:i386 libstdc++6:i386 libgcc-s1:i386 zlib1g:i386 libncurses6:i386 libtinfo6:i386
-          pip install --upgrade pip
+          pip install --upgrade pip==23.3.2
           pip install buildozer cython==0.29.36 virtualenv
 
       - name: Build APK
@@ -46,30 +46,28 @@ jobs:
           chmod +x $SDK/cmdline-tools/latest/bin/*
           mkdir -p $SDK/tools/bin
           ln -sf $SDK/cmdline-tools/latest/bin/sdkmanager $SDK/tools/bin/sdkmanager
-
           yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK || true
           yes | $SDK/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.1.8937393" || true
 
           cd $GITHUB_WORKSPACE
           buildozer android debug || true
 
-          echo "=== PATCH P4A AIDL CHECK ==="
+          echo "=== PATCH P4A ==="
           P4A_DIR=$(find $HOME/.buildozer -type d -name "python-for-android" | head -n1)
-          echo "P4A dir: $P4A_DIR"
-          find $P4A_DIR -type f -name "*.py" -exec sed -i 's/raise.*Aidl cannot be executed/pass # PATCHED/' {} \; || true
-          find $P4A_DIR -type f -name "*.py" -exec sed -i 's/def check_aidl.*/def check_aidl(self):\n        return True # PATCHED/' {} \; || true
-
+          echo "P4A: $P4A_DIR"
+          if [ -n "$P4A_DIR" ]; then
+            find $P4A_DIR -type f -name "*.py" -exec sed -i 's/raise.*Aidl cannot be executed/pass # PATCHED/' {} \; || true
+            find $P4A_DIR -type f -name "*.py" -exec sed -i 's/pip install -U pip/pip install pip==23.3.2/g' {} \; || true
+            find $P4A_DIR -type f -name "*.py" -exec sed -i 's/pip install --upgrade pip/pip install pip==23.3.2/g' {} \; || true
+          fi
           echo '#!/bin/bash
           exit 0' | sudo tee /usr/local/bin/aidl > /dev/null
           sudo chmod +x /usr/local/bin/aidl
-          for B in $SDK/build-tools/*; do
-            [ -d "$B" ] || continue
-            echo '#!/bin/bash
-          exit 0' > "$B/aidl"
-            chmod +x "$B/aidl"
-          done
+          for B in $SDK/build-tools/*; do [ -d "$B" ] || continue; echo '#!/bin/bash
+          exit 0' > "$B/aidl"; chmod +x "$B/aidl"; done
 
           echo "=== RETRY BUILD ==="
+          rm -rf $HOME/.buildozer/android/platform/build-*
           buildozer android debug
 
       - name: Upload APK
