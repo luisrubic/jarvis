@@ -5,87 +5,30 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
-      - uses: actions/setup-java@v5
-        with:
-          distribution: 'temurin'
-          java-version: '17'
 
-      - name: Install deps
+      - name: Fix buildozer.spec per evitare Build-Tools 37
         run: |
-          sudo apt-get update
-          sudo apt-get install -y zip unzip libtool libtool-bin autoconf automake cmake pkg-config libffi-dev libssl-dev libtinfo5 libc6-i386 lib32stdc++6 lib32z1
-
-      - name: Install Buildozer
-        run: |
-          pip install --upgrade pip==24.0
-          pip install buildozer cython==0.29.36
-
-      - name: Build APK
-        run: |
-          set -e
-          rm -rf .buildozer bin
-          buildozer init || true
-          sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec
-          echo "android.build_tools_version = 34.0.0" >> buildozer.spec
-
-          P4A=~/.buildozer/android/platform/python-for-android
-          SDK=~/.buildozer/android/platform/android-sdk
-          SYS_SDK=/usr/local/lib/android/sdk
-
-          buildozer android debug || true
-
-          # 1. LICENZE
-          mkdir -p $SDK/licenses
-          mkdir -p ~/.android
-          touch ~/.android/repositories.cfg
-          cp -r $SYS_SDK/licenses/* $SDK/licenses/ || true
-          chmod 777 $SDK/licenses/* || true
-
-          # 2. PATCH P4A: sostituisci 37.0.0 con 34.0.0 ovunque
-          echo "=== PATCH P4A 37 -> 34 ==="
-          if [ -d "$P4A" ]; then
-            grep -r "37.0.0" $P4A --include="*.py" | head -10 || true
-            find $P4A -type f -name "*.py" -exec sed -i 's/37\.0\.0/34.0.0/g' {} \; 2>/dev/null || true
-            find $P4A -type f -name "*.py" -exec sed -i 's/36\.0\.0/34.0.0/g' {} \; 2>/dev/null || true
-            find $P4A -type f -name "*.py" -exec sed -i 's/35\.0\.0/34.0.0/g' {} \; 2>/dev/null || true
-            find $P4A -type f -name "*.py" -exec sed -i 's/pip install -U pip/echo SKIP pip/g' {} \; 2>/dev/null || true
+          # se non hai buildozer.spec, crealo
+          [ -f buildozer.spec ] || buildozer init || true
+          # forza API 34 e build-tools 34.0.0 (quello che non chiede licenza 37)
+          sed -i 's/^android.api =.*/android.api = 34/' buildozer.spec || echo "android.api = 34" >> buildozer.spec
+          if grep -q "build_tools_version" buildozer.spec; then
+            sed -i 's/^#*.*build_tools_version.*/android.build_tools_version = 34.0.0/' buildozer.spec
+          else
+            echo "android.build_tools_version = 34.0.0" >> buildozer.spec
           fi
-          rm -rf ~/.buildozer/android/platform/build-*/build/venv
+          echo "--- buildozer.spec fixato ---"
+          grep -E "android.api|build_tools_version|title|source.include" buildozer.spec | head -20
 
-          # 3. INSTALLA 34.0.0 e CREA FAKE 37.0.0
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --licenses --sdk_root=$SDK 2>&1 | tail -5 || true
-          yes | $SDK/cmdline-tools/latest/bin/sdkmanager --install "build-tools;34.0.0" --sdk_root=$SDK 2>&1 | tail -20 || true
-
-          mkdir -p $SDK/build-tools
-          if [ -d "$SDK/build-tools/34.0.0" ]; then
-            echo "Creo fake 37.0.0 da 34.0.0"
-            rm -rf $SDK/build-tools/37.0.0
-            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/37.0.0
-            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/36.0.0 2>/dev/null || true
-            cp -r $SDK/build-tools/34.0.0 $SDK/build-tools/35.0.0 2>/dev/null || true
-          fi
-
-          ls -lh $SDK/build-tools/
-          ls -lh $SDK/build-tools/34.0.0/ | head -10
-
-          # 4. PATCH AIDL
-          find $SDK/build-tools -name aidl -type f | while read AIDL_PATH; do
-            if [ ! -f "$AIDL_PATH.real" ]; then
-              mv "$AIDL_PATH" "$AIDL_PATH.real"
-              printf '#!/bin/bash\nDIR="$(dirname "$0")"\nif [ $# -eq 0 ]; then exit 0; fi\nexec "$DIR/aidl.real" "$@"\n' > "$AIDL_PATH"
-              chmod +x "$AIDL_PATH" "$AIDL_PATH.real"
-              echo "Patchato $AIDL_PATH"
-            fi
-          done
-
-          echo "=== BUILD FINALE ==="
-          buildozer android debug
+      - name: Build APK con Action già pronta
+        uses: ArtemSBulgakov/buildozer-action@v1
+        with:
+          workdir: .
+          command: buildozer android debug
+          buildozer_version: master
 
       - name: Upload APK
         uses: actions/upload-artifact@v5
